@@ -13,6 +13,7 @@
 #define H 600
 #define NCARS 20
 #define PI2 (M_PI/2)
+#define PI4 (M_PI/4)
 
 enum gamestates {READY, ALIVE, GAMEOVER} gamestate = READY;
 
@@ -34,6 +35,8 @@ void new_car();
 void update_stuff();
 void draw_stuff();
 void text(char *fstr, int value, int height);
+void ang_fix(float *angle);
+float ang_cmp(float ang0, float ang1);
 
 //the entry point and main game loop
 int main()
@@ -142,7 +145,11 @@ void update_stuff()
         for(int i = 0; i < NCARS; i++)
         {
                 if(cur == i && speed[i] > 0.1f)
+                {
                         angle[i] += ((turn_left - turn_right) * speed[i])/(M_PI * 150.0f);
+                        ang_fix(angle + i);
+                        printf("%f\n", angle[i]);
+                }
 
                 car_x[i] += sinf(angle[i]) * speed[i] * 0.1f;
                 car_y[i] += cosf(angle[i]) * speed[i] * 0.1f;
@@ -163,9 +170,11 @@ void update_stuff()
                 if(     lateral[i] >=  3.0f) { lateral[i] -= 3.0f; speed[i] += 2.0f; angle[i] += latang * 0.1f; }
                 else if(lateral[i] <= -3.0f) { lateral[i] += 3.0f; speed[i] -= 2.0f; angle[i] -= latang * 0.1f; }
                 else                         { lateral[i]  = 0.0f; }
+
+                ang_fix(angle + i);
         }
 
-        // collisions
+        // car-car collisions
         for(int i = 0; i < NCARS; i++) for(int j = i+1; j < NCARS; j++)
         {
                 if(fabsf(car_x[i] - car_x[j]) < 20.0f &&
@@ -181,6 +190,15 @@ void update_stuff()
                         lateral[i] *= 0.05f;
                         lateral[j] *= 0.05f;
 
+                        // random angle change on hi speed collision
+                        if(fabsf(speed[i]) > 2.0f || speed[j] > 2.0f)
+                        {
+                                angle[i] += (rand()%1000 - 500) * 0.0001;
+                                angle[j] += (rand()%1000 - 500) * 0.0001;
+                                ang_fix(angle + i);
+                                ang_fix(angle + j);
+                        }
+
                         float ai = angle[i];
                         float aj = angle[j];
                         float ix = sinf(ai) * si + sinf(ai + PI2) * li;
@@ -192,6 +210,45 @@ void update_stuff()
                         speed[j]   += (sinf(aj      )*ix + cosf(aj      )*iy) * 0.95f;
                         lateral[i] += (sinf(ai + PI2)*jx + cosf(ai + PI2)*jy) * 0.95f;
                         lateral[j] += (sinf(aj + PI2)*ix + cosf(aj + PI2)*iy) * 0.95f;
+                }
+        }
+
+        // car-wall collisions
+        for(int i = 0; i < NCARS; i++)
+        {
+                if(fabsf(car_y[i] - 26) < 10.0f)
+                {
+                        float si = speed[i];
+                        float li = lateral[i];
+
+                        speed[i]   *= 0.15f;
+                        lateral[i] *= 0.15f;
+
+                        float ai = angle[i];
+                        float wallangle = PI2;
+
+                        float ix = sinf(ai) * si + sinf(ai + PI2) * li;
+                        float iy = cosf(ai) * si + cosf(ai + PI2) * li;
+
+
+                        if(fabsf(ang_cmp(ai, wallangle)) < PI4)
+                        {
+                                printf("ai=%f wallangle=%f PI4=%f\n", ai, wallangle, PI4);
+                                angle[i] = (angle[i] + wallangle) / 2.0f;
+                                ang_fix(angle + i);
+                                speed[i] *= (iy < 0 ? -0.99f : 0.99f);
+                        }
+                        else if(fabsf(ang_cmp(ai, wallangle + M_PI)) < PI4)
+                        {
+                                printf("ai=%f wallangle=%f PI4=%f\n", ai, wallangle + M_PI, PI4);
+                                angle[i] = (angle[i] + wallangle + M_PI) / 2.0f;
+                                ang_fix(angle + i);
+                                speed[i] *= (iy < 0 ? -0.99f : 0.99f);
+                        }
+                        else
+                        {
+                                speed[i] *= (iy < 0 ? -0.99f : 0.99f);
+                        }
                 }
         }
 
@@ -236,4 +293,19 @@ void text(char *fstr, int value, int height)
         SDL_RenderCopy(renderer, msgtex, &fromrec, &torec);
         SDL_DestroyTexture(msgtex);
         SDL_FreeSurface(msgsurf);
+}
+
+void ang_fix(float *angle)
+{
+        *angle = fmodf(*angle, M_PI*2);
+        if(*angle < 0)
+                *angle += M_PI*2;
+}
+
+float ang_cmp(float ang0, float ang1)
+{
+        float diff = ang0 - ang1;
+        ang_fix(&diff);
+        if(diff > M_PI)
+                diff -= M_PI;
 }
