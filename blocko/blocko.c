@@ -85,6 +85,26 @@ SDL_Texture *top;
 SDL_Texture *side;
 SDL_Texture *bottom;
 
+//shaders
+GLuint vao, vbo[2];
+GLuint vertexshader, fragmentshader;
+GLuint shaderprogram;
+char *vertexcode = "#version 130\n\
+in  vec2 in_Position;\n\
+in  vec3 in_Color;\n\
+out vec3 ex_Color;\n\
+void main(void) {\n\
+    gl_Position = vec4(in_Position.x, in_Position.y, 0.0, 1.0);\n\
+    ex_Color = in_Color;\n\
+}\n";
+char *fragmentcode = "#version 130\n\
+precision highp float;\n\
+in  vec3 ex_Color;\n\
+//out vec4 gl_FragColor;\n\
+void main(void) {\n\
+    gl_FragColor = vec4(ex_Color, 1.0);\n\
+}\n";
+
 //prototypes
 void setup();
 void resize();
@@ -166,6 +186,69 @@ void setup()
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         }
+
+        // shader setup
+        int ok;
+        GLfloat myverts[] = { .10,-.20,.30,-.40,-.10,.20,-.30,.40 };
+        GLfloat mycolors[] = { .9,.2,.3,.4,.9,.2,.3,.4,.9,.2,.3,.4 };
+	glGenVertexArrays(1, &vao);
+	glBindVertexArray(vao);
+	glGenBuffers(2, vbo);
+
+	glBindBuffer(GL_ARRAY_BUFFER, vbo[0]);
+	glBufferData(GL_ARRAY_BUFFER, 8 * sizeof(GLfloat), myverts, GL_STATIC_DRAW);
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, 0);
+        glEnableVertexAttribArray(0);
+
+	glBindBuffer(GL_ARRAY_BUFFER, vbo[1]);
+	glBufferData(GL_ARRAY_BUFFER, 12 * sizeof(GLfloat), mycolors, GL_STATIC_DRAW);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, 0);
+        glEnableVertexAttribArray(1);
+
+        vertexshader = glCreateShader(GL_VERTEX_SHADER);
+        glShaderSource(vertexshader, 1, (const GLchar**)&vertexcode, 0);
+        glCompileShader(vertexshader);
+        glGetShaderiv(vertexshader, GL_COMPILE_STATUS, &ok);
+        if(!ok)
+        {
+                int len;
+                glGetShaderiv(vertexshader, GL_INFO_LOG_LENGTH, &len);
+                char *log = malloc(len);
+                glGetShaderInfoLog(vertexshader, len, &len, log);
+                printf("log1: %s\n", log);
+                exit(-1);
+        }
+
+        fragmentshader = glCreateShader(GL_FRAGMENT_SHADER);
+        glShaderSource(fragmentshader, 1, (const GLchar**)&fragmentcode, 0);
+        glCompileShader(fragmentshader);
+        glGetShaderiv(fragmentshader, GL_COMPILE_STATUS, &ok);
+        if(!ok)
+        {
+                int len;
+                glGetShaderiv(fragmentshader, GL_INFO_LOG_LENGTH, &len);
+                char *log = malloc(len);
+                glGetShaderInfoLog(fragmentshader, len, &len, log);
+                printf("log2: %s\n", log);
+                exit(-1);
+        }
+
+        shaderprogram = glCreateProgram();
+	glAttachShader(shaderprogram, vertexshader);
+	glAttachShader(shaderprogram, fragmentshader);
+	glBindAttribLocation(shaderprogram, 0, "in_Position");
+        glBindAttribLocation(shaderprogram, 1, "in_Color");
+	glLinkProgram(shaderprogram);
+	glGetProgramiv(shaderprogram, GL_LINK_STATUS, (int *)&ok);
+	if(!ok)
+	{
+		int len;
+		glGetProgramiv(shaderprogram, GL_INFO_LOG_LENGTH, &len);
+		char *log = malloc(len);
+		glGetProgramInfoLog(shaderprogram, len, &len, log);
+                printf("program: %s\n", log);
+                exit(-1);
+	}
 
         SDL_SetRelativeMouseMode(SDL_TRUE);
 }
@@ -575,6 +658,7 @@ void rayshot(float eye0, float eye1, float eye2, float f0, float f1, float f2)
                 float a1 = (BS * (y + (f1 > 0 ? 1 : 0)) - eye1) / f1;
                 float a2 = (BS * (z + (f2 > 0 ? 1 : 0)) - eye2) / f2;
                 float amt = 0;
+                int legit = legit_tile(x, y, z);
 
                 place_x = x;
                 place_y = y;
@@ -584,29 +668,26 @@ void rayshot(float eye0, float eye1, float eye2, float f0, float f1, float f2)
                 else if(a1 < a2)       { y += (f1 > 0 ? 1 : -1); amt = a1; }
                 else                   { z += (f2 > 0 ? 1 : -1); amt = a2; }
 
+                legit &= legit_tile(x, y, z);
+
                 eye0 += amt * f0 * 1.0001;
                 eye1 += amt * f1 * 1.0001;
                 eye2 += amt * f2 * 1.0001;
 
-                if(x < 0 || y < 0 || z < 0 || x >= TILESW || y >= TILESH || z >= TILESD)
-                        goto bad;
-
-                if(tiles[z][y][x] != OPEN)
+                if(legit && tiles[z][y][x] != OPEN)
                         break;
 
-                if(i == 6)
-                        goto bad;
+                if(!legit || i == 6)
+                {
+                        target_x = target_y = target_z = 0;
+                        place_x = place_y = place_z = 0;
+                        return;
+                }
         }
 
         target_x = x;
         target_y = y;
         target_z = z;
-
-        return;
-
-        bad:
-        target_x = target_y = target_z = 0;
-        place_x = place_y = place_z = 0;
 }
 
 //draw everything in the game on the screen
@@ -694,6 +775,10 @@ void draw_stuff()
                 if(tiles[z][y][x] == GRAS && (y == TILESH-1 || tiles[z][y+1][x] == OPEN))
                         grassbottom(x, y, z);
         }
+
+	glUseProgram(shaderprogram);
+	glDrawArrays(GL_TRIANGLE_STRIP, 0, 8);
+	glUseProgram(0);
 
         glDisable(GL_TEXTURE_2D);
         glDisable(GL_CULL_FACE);
